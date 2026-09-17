@@ -1,0 +1,283 @@
+# Development
+
+Day-to-day development workflow, code quality, testing, and Docker.
+
+> [!IMPORTANT]
+> Configure cloud resource values in `.env` after first deployment. See [Getting Started](getting-started.md) for initial setup and [Environment Variables](environment-variables.md) for complete reference.
+
+## Quick Start
+
+**Local-only** (cloud resource URIs commented out in `.env`):
+```bash
+uv run server                              # API at 127.0.0.1:8000 (SQLite sessions, in-memory storage)
+SERVE_WEB_INTERFACE=TRUE uv run server     # With ADK web UI
+```
+
+**Standard development** (mirrors production, requires deployed cloud resource URIs configured in `.env`):
+```bash
+docker compose up --build --watch          # Cloud SQL (via IAP tunnel), Agent Engine, GCS
+```
+
+Both modes always export traces and structured logs to Cloud Trace and Cloud Logging. Set `TELEMETRY_NAMESPACE` in `.env` to a unique value (e.g., your name) so teammates can filter to your traces when reviewing experiments.
+
+**Prerequisites:**
+- `.env` file configured with required authentication and identification values (copy from `.env.example`)
+- `gcloud auth application-default login` (for Vertex AI and telemetry)
+
+See [Getting Started](getting-started.md) for initial setup.
+
+## Environment Setup
+
+Configure your local `.env` file after completing your first deployment. The deployed resources provide production-ready persistence for sessions, memory, and artifacts.
+
+### 1. Create .env File
+
+```bash
+cp .env.example .env
+```
+
+### 2. Configure Environment Variables
+
+Edit `.env` and configure required values. The `.env.example` file includes inline comments for each variable.
+
+**Required configuration:**
+- Google Cloud Vertex AI credentials
+- Agent identification
+- OpenTelemetry settings
+
+**Recommended (after first deployment):**
+- `BASTION_INSTANCE` - Bastion host name for IAP tunnel (docker-compose)
+- `BASTION_ZONE` - Bastion host zone for IAP tunnel (docker-compose)
+- `SESSION_SERVICE_URI` - Session persistence (Cloud SQL)
+- `MEMORY_SERVICE_URI` - Memory persistence (Agent Engine)
+- `ARTIFACT_SERVICE_URI` - Artifact storage
+
+See [Environment Variables](environment-variables.md) for complete reference.
+
+### 3. Verify Configuration
+
+```bash
+# Check auth
+gcloud auth application-default login
+
+# Verify with Docker Compose (starts server and connects to cloud resources configured above)
+docker compose up --build --watch
+```
+
+See [Environment Variables](environment-variables.md) for complete reference.
+
+## Feature Branch Workflow
+
+```bash
+# Create branch (feat/, fix/, docs/, refactor/, test/)
+git checkout -b feat/your-feature-name
+
+# Develop locally
+docker compose up --build --watch  # Standard (cloud resources, mirrors production)
+# Or: uv run server                # Local-only with cloud resource URIs commented out in .env
+
+# Quality checks before commit (100% coverage required)
+# Pre-commit automates format/lint/typecheck if installed
+uv run ruff format && uv run ruff check && uv run mypy
+uv run pytest --cov --cov-report=term-missing
+
+# Commit (Conventional Commits: 50 char title, list body)
+git add . && git commit -m "feat: add new tool"
+
+# Push and create PR
+git push origin feat/your-feature-name
+gh pr create  # Follow PR format: What, Why, How, Tests
+
+# After merge to main, monitor deployment
+gh run list --workflow=ci-cd.yml --limit 5
+gh run view --log
+```
+
+GitHub Actions automatically builds, tests, and deploys to Cloud Run. Check job summary for deployment details.
+
+## Code Quality & Testing
+
+Run format, lint, type check, and unit tests (100% coverage required) **before every commit**
+
+**Standards:**
+- **Type Hints:** Strict mypy, modern Python 3.13+ syntax (`|` unions, lowercase generics)
+- **Code Style:** Ruff enforced (88-char lines, `Path` objects, security checks)
+- **Docstrings:** Google-style format (args, returns, exceptions)
+- **Testing:** 100% coverage on production code, exclusions for configuration modules, fixtures in `conftest.py`, test behaviors and errors
+
+### Pre-commit Hooks
+
+Pre-commit runs format, lint, and type checks as a fix-in-place git hook on every `git commit`. It does not run pytest, so coverage validation still requires `uv run pytest --cov`.
+
+**One-time setup** (writes `.git/hooks/pre-commit`):
+
+```bash
+uv run pre-commit install
+```
+
+**Manual invocation:**
+
+```bash
+uv run pre-commit run --all-files              # All hooks on all tracked files
+uv run pre-commit run --files path/to/file     # Scope to specific files
+uv run pre-commit run ruff-format              # Run a single hook
+```
+
+Hooks are configured in `.pre-commit-config.yaml`. Versions for the `language: system` hooks (ruff, mypy) are pinned in `uv.lock`. `pre-commit autoupdate` is a no-op for these hooks; update versions with `uv lock --upgrade` instead.
+
+See [Testing Strategy](testing.md) and [Code Quality](code-quality.md) references for detailed patterns, tool usage, and exclusion strategies.
+
+## Docker Compose for Standard Development
+
+Docker Compose reads `.env` values and mirrors the production Cloud Run architecture: IAP tunnel to bastion → Auth Proxy → Cloud SQL private IP, with file sync and auto-restart (~2-5s feedback loop).
+
+```bash
+# Start with watch mode (leave running)
+docker compose up --build --watch
+
+# Changes in src/ sync instantly
+# Changes in pyproject.toml or uv.lock trigger rebuild
+
+# Stop: Ctrl+C or docker compose down
+```
+
+> [!IMPORTANT]
+> Docker Compose requires `roles/iap.tunnelResourceAccessor` on your Google account for IAP tunnel access. Grant via `gcloud projects add-iam-policy-binding` or GCP Console.
+
+**Key details:**
+- IAP tunnel container connects to bastion host running Auth Proxy, sharing app's localhost via `network_mode: "service:app"`
+- App connects to `localhost:5432` identically to Cloud Run
+- Source files sync to container without rebuild (instant feedback)
+- Loads `.env` automatically for configuration
+- Multi-stage Dockerfile optimized with uv cache mounts (~80% faster rebuilds)
+- Non-root container (~200MB final image)
+
+## Local-Only (uv run server)
+
+`uv run server` reads `.env` like Docker Compose. With cloud resource URIs set, it connects to those services. For fully local development, comment out `SESSION_SERVICE_URI`, `MEMORY_SERVICE_URI`, and `ARTIFACT_SERVICE_URI` in `.env`. Sessions persist locally in SQLite (`.adk/` directory). Traces and logs still export to Cloud Trace and Cloud Logging.
+
+```bash
+uv run server                              # Uses cloud resources if URIs set, local storage if unset
+SERVE_WEB_INTERFACE=TRUE uv run server     # With ADK web UI
+LOG_LEVEL=DEBUG uv run server              # Debug logging
+```
+
+You can also connect `uv run server` to Cloud SQL, Agent Engine, or GCS selectively by setting individual service URI environment variables. See [Cloud Backend Options](cloud-backend-options.md) for manual IAP tunnel setup and selective backend options.
+
+See [Docker Compose Workflow](docker-compose-workflow.md) and [Dockerfile Strategy](dockerfile-strategy.md) for details on watch mode, volumes, layer optimization, and security.
+
+## Common Tasks
+
+### Dependencies
+
+```bash
+# Add runtime dependency
+uv add package-name
+
+# Add dev dependency
+uv add --group dev package-name
+
+# Update all dependencies
+uv lock --upgrade
+
+# Update specific package
+uv lock --upgrade-package package-name
+
+# After updating pyproject.toml or uv.lock:
+# - Locally: Restart server or Docker Compose (auto-rebuild with watch)
+# - CI/CD: Commit both files together (required for --locked to pass)
+```
+
+### Version Bump
+
+When bumping version in `pyproject.toml`:
+
+```bash
+# Edit version in pyproject.toml
+# Then update lockfile
+uv lock
+
+# Commit both together
+git add pyproject.toml uv.lock
+git commit -m "chore: bump version to X.Y.Z"
+```
+
+**Why:** CI uses `uv sync --locked` which will fail if lockfile is out of sync.
+
+### Custom GCP Services or IAM Roles
+
+Need a new GCP API or WIF IAM role for your feature? Add it to the designated main module extension points  -  no bootstrap re-run or admin required.
+
+- **`terraform/main/services.tf`**  -  add to the `services` set to enable a GCP API
+- **`terraform/main/iam.tf`**  -  add to the `wif_additional_roles` set to grant the GitHub Actions WIF principal a new role
+
+Add the roles or services AND the resources that use them in the same PR. The `time_sleep` resources handle propagation within the apply  -  declare `depends_on` on the correct sleep instance(s) for any resource that requires a newly-enabled service or role.
+
+See [Extending the Main Module](bootstrap.md#extending-the-main-module) for the full pattern, code examples, and rationale.
+
+### Test Deployed Service
+
+Proxy Cloud Run service to test locally:
+
+```bash
+# Service name format: ${agent_name}-${environment}
+gcloud run services proxy <service-name> \
+  --project <project-id> \
+  --region <region> \
+  --port 8000
+
+# Test
+curl http://localhost:8000/health
+
+# With web UI (if SERVE_WEB_INTERFACE=TRUE)
+open http://localhost:8000
+
+# Stop proxy: Ctrl+C
+```
+
+See [Cloud Run proxy documentation](https://cloud.google.com/run/docs/authenticating/developers#proxy).
+
+### Observability
+
+**Server Logs:**
+- Print to stdout (via LoggingPlugin callbacks)
+- Basic request/response logging for immediate feedback
+
+**Opentelemetry Traces and Logs:**
+- Detailed traces → Cloud Trace
+- Structured logs → Cloud Logging
+- Full correlation between traces and logs
+
+See [Observability](observability.md) for querying, filtering, and trace analysis.
+
+## Project Structure
+
+```
+your-agent-name/
+  src/sdlc_manager/
+    agent.py              # ADK App and LlmAgent configuration
+    callbacks.py          # Agent lifecycle callbacks (logging, safety, tool augmentation)
+    prompt.py             # Agent instructions (InstructionProvider pattern)
+    config.py             # Typed env-var validation (Pydantic ServerEnv)
+    observability.py      # OpenTelemetry initialization
+    server.py             # FastAPI composition root (services, DI, routing)
+    tools.py              # Custom FunctionTools for agent use
+  tests/                  # Test suite (unit lane, 100% coverage gate)
+    conftest.py           # Shared fixtures, test env setup (all lanes)
+    unit/test_*.py        # Default lane; modules mirror source structure
+  terraform/              # Infrastructure as code
+    bootstrap/{env}       # One-time CI/CD setup per environment
+    main/                 # Agent cloud resource deployment
+  docs/                   # Documentation
+  .env.example            # Environment template
+  pyproject.toml          # Project configuration
+  docker-compose.yml      # Local development
+  Dockerfile              # Container image
+  AGENTS.md               # AI Coding Agent instructions
+  CLAUDE.md               # Imports AGENTS.md for Claude Code
+  README.md               # Main documentation
+```
+
+---
+
+← [Back to Documentation](README.md)

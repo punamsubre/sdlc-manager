@@ -1,0 +1,71 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        editable: "true"
+    image: sdlc-manager:latest
+    container_name: sdlc-manager-local
+    ports:
+      # Bind to localhost only for security (prevents external network access)
+      # To allow access from other machines, change to "8000:8000" (not recommended for development with sensitive data)
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:5432:5432" # Postgres port for local access (via IAP tunnel)
+    env_file:
+      - .env
+    volumes:
+      # Mount Application Default Credentials for local development
+      # Windows users: Replace ${HOME} with Windows path, e.g.:
+      #   C:\Users\YourUsername\AppData\Roaming\gcloud\application_default_credentials.json:/gcloud/application_default_credentials.json:ro
+      - ${HOME}/.config/gcloud/application_default_credentials.json:/gcloud/application_default_credentials.json:ro
+      # Mount host Git config for Git operations inside the container
+      - ${HOME}/.gitconfig:/home/app/.gitconfig:ro
+      # Mount host SSH keys for Git SSH operations (optional)
+      # - ${HOME}/.ssh:/home/app/.ssh:ro
+    environment:
+      # Use mounted Application Default Credentials
+      GOOGLE_APPLICATION_CREDENTIALS: "/gcloud/application_default_credentials.json"
+    develop:
+      # Watch configuration for file sync with auto-restart
+      watch:
+        # Sync source files and restart  -  editable install resolves imports from /app/src
+        - action: sync+restart
+          path: ./src
+          target: /app/src
+        # Rebuild on dependency changes  -  requires full image rebuild
+        - action: rebuild
+          path: ./pyproject.toml
+        - action: rebuild
+          path: ./uv.lock
+    # Crash once, stay down  -  clean stack trace output for debugging
+    restart: no
+
+  # IAP tunnel to bastion  -  shares app's localhost via network_mode
+  iap-tunnel:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
+    container_name: sdlc-manager-iap-tunnel
+    network_mode: "service:app"
+    env_file:
+      - .env
+    command: >
+      gcloud compute start-iap-tunnel ${BASTION_INSTANCE} 5432
+      --zone=${BASTION_ZONE}
+      --project=${GOOGLE_CLOUD_PROJECT}
+      --local-host-port=0.0.0.0:5432
+    volumes:
+      # Mount gcloud config for IAP tunnel authentication.
+      # CLOUDSDK_CONFIG decouples from container home dir per Google's recommended Docker auth pattern:
+      # https://docs.cloud.google.com/sdk/docs/downloads-docker#authenticating_gcloud_docker_image
+      #
+      # Not read-only: gcloud CLI writes credentials.db (token cache) and logs/ at runtime.
+      # Read-only mounts cause "Unable to create private file credentials.db" errors.
+      #
+      # Security note: Writable mount is local development only (not production). Image is
+      # Google-maintained (gcr.io/google.com/cloudsdktool/google-cloud-cli). Writes are limited
+      # to gcloud's own token cache and log files  -  no config mutation.
+      - ${HOME}/.config/gcloud:/gcloud-config
+    environment:
+      CLOUDSDK_CONFIG: "/gcloud-config"
+    # Use unless-stopped for auto-reconnect on network drops
+    restart: unless-stopped

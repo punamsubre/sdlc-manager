@@ -1,0 +1,22 @@
+# Secrets must never enter a build context.
+.env
+.env.*
+!.env.example
+
+# Local environments and caches — 860+ MB of context bloat, none of it shipped.
+.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# VCS, builds, packaging artifacts.
+.git/
+dist/
+build/
+*.egg-info/
+
+# Local tooling state.
+.vscode/
+.idea/
+node_modules/

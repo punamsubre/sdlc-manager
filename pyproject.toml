@@ -1,0 +1,138 @@
+[project]
+name = "sdlc-manager"
+version = "0.1.18"
+description = "AI-powered SDLC Manager - Git, validation, AI review, and Terraform in one orchestrated agent platform"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "google-adk[gcp,otel-gcp]==2.4.0",
+    "google-auth>=2.40.3,<3.0.0",
+    "google-cloud-logging>=3.12.1,<4.0.0",
+    "opentelemetry-exporter-gcp-logging>=1.12.0a0,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.42.1,<2.0.0",
+    "opentelemetry-instrumentation-fastapi>=0.63b1,<0.64",
+    "opentelemetry-instrumentation-google-genai>=0.7b1,<1",
+    "opentelemetry-instrumentation-logging>=0.63b1,<0.64",
+    "pydantic>=2.11.0,<3.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
+    "sqlalchemy[postgresql-asyncpg]>=2.0.45,<3.0.0",
+    "httpx>=0.28.1,<1.0.0",
+    "sqlglot>=25.0.0,<31",
+    "slowapi>=0.1.9,<1.0.0",
+    "python-jose[cryptography]>=3.3.0,<4",
+    "jinja2>=3.1.0,<4.0.0",
+]
+
+[project.scripts]
+# `server`/`helper` are kept for compatibility; the sdlc-* names are
+# canonical (generic names risk PATH collisions on developer machines).
+server = "sdlc_manager.server:main"
+sdlc-server = "sdlc_manager.server:main"
+helper = "sdlc_manager.helper:main"
+sdlc-helper = "sdlc_manager.helper:main"
+sdlc-manager = "sdlc_manager.cli:main"
+
+[dependency-groups]
+dev = [
+    "google-adk[eval]==2.4.0",
+    "ruff>=0.12.7,<1.0.0",
+    "mypy>=1.17.1,<2.0.0",
+    "pytest>=8.3.4,<9.0.0",
+    "pytest-cov>=7.0.0,<8.0.0",
+    "pytest-asyncio>=1.2.0,<2.0.0",
+    "ipykernel>=7.0.0,<8.0.0",
+    "types-grpcio>=1.0.0.20251009,<2.0.0.0",
+    "pytest-mock>=3.15.1,<4.0.0",
+    "pre-commit>=4.6.0,<5.0.0",
+    "httpx>=0.28.1,<1.0.0",
+    "testcontainers[postgres]>=4.14.2,<5.0.0",
+]
+docs = [
+    "mkdocs-callouts>=1.16.0,<2.0.0",
+    "mkdocs-material>=9.7.1,<10.0.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.21,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+exclude-newer = "5 days"
+
+[tool.ruff]
+src = ["src"]
+target-version = "py313"
+line-length = 88
+fix = true
+extend-exclude = ["notebooks"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint]
+select = ["E","W","F","I","B","C4","UP","N","S","SIM","PTH","RET"]
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.mypy]
+python_version = "3.13"
+mypy_path = "src"
+packages = ["sdlc_manager"]
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["jose", "jose.*", "google.auth.*", "google.oauth2.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = [
+    "src/**/__init__.py",
+    "src/**/__main__.py",
+    "src/**/server.py",
+    "src/**/agent.py",
+    "src/**/prompt.py",
+    "src/**/observability.py",
+    "src/**/cli.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+precision = 2
+fail_under = 100
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["tests/unit"]
+markers = [
+    "integration: requires a real external resource (e.g. Postgres); no LLM or cloud",
+    "smoke: requires a live deployed service URL",
+    "deterministic: eval case scored by exact/ROUGE match (the PR gate)",
+    "judge: eval case scored by an LLM judge (non-deterministic)",
+]
+filterwarnings = [
+    "ignore:BaseAgentConfig is deprecated:DeprecationWarning",
+]
+asyncio_mode = "auto"

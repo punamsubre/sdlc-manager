@@ -1,0 +1,355 @@
+# Deployment Modes Reference
+
+> **STATUS (2026-08-28):** target design. Implemented today: `ci.yml` (quality gate) and `cd.yml` (build + dev deploy). The stage/prod promotion, smoke, and digest workflows described below are not yet built.
+
+Multi-environment deployment strategy, infrastructure parity, and image promotion.
+
+## Deployment Mode Comparison
+
+### Dev-Only Mode (Default)
+
+**Infrastructure:**
+- Single GCP project
+- Single Terraform deployment environment (dev)
+- One GitHub Environment variable scope
+- No tag protection
+
+**Workflow:**
+- PR → dev plan (comment on PR)
+- Merge → dev deploy
+- Tag → dev deploy (version labeled)
+
+**Use cases:**
+- Experiments and prototypes
+- Internal tools with limited user base
+- Cost optimization (single project)
+- Rapid iteration without approval gates
+
+**Configuration:**
+```yaml
+# .github/workflows/ci-cd.yml
+jobs:
+  config:
+    uses: ./.github/workflows/config-summary.yml
+    with:
+      production_mode: false
+```
+
+### Production Mode (Opt-In)
+
+**Infrastructure:**
+- Three GCP projects (dev/stage/prod)
+- Four GitHub Environments (dev/stage/prod/prod-apply)
+- Environment-scoped variables
+- Tag protection ruleset (v*)
+
+**Workflow:**
+- PR → dev plan (comment on PR)
+- Merge → dev + stage deploy (parallel)
+- Tag → prod deploy (manual approval required)
+
+**Use cases:**
+- Customer-facing production services
+- Compliance requiring staged deployment
+- Infrastructure validation before production
+- Rollback capability critical
+
+**Configuration:**
+```yaml
+# .github/workflows/ci-cd.yml
+jobs:
+  config:
+    uses: ./.github/workflows/config-summary.yml
+    with:
+      production_mode: true
+```
+
+### Switching Modes
+
+**Requirements:**
+1. Bootstrap Github Environment(s) and Google Cloud project(s) for target mode
+2. Configure protection rules (if switching to production mode)
+3. Create PR with mode change in ci-cd.yml
+4. Merge PR to apply new workflow behavior
+
+**Why config job parameter?** GitHub Actions doesn't allow accessing workflow-level `env` variables (like `env.PRODUCTION_MODE: {true/false}`)in jobs that call reusable workflows. The config job output pattern works around this limitation.
+
+## Multi-Environment Strategy
+
+### Infrastructure Parity
+
+All environments use **identical infrastructure configuration**. Stage validates the exact infrastructure that will deploy to prod.
+
+**Differences between environments:**
+- Resource names (via `environment` variable: dev/stage/prod)
+- Runtime app config (GitHub Environment variables: LOG_LEVEL, etc.)
+- Cleanup policies (configured per environment in bootstrap)
+
+**Infrastructure config is hard-coded** in Terraform and identical across environments. This ensures infrastructure changes (for example, the Cloud Run service minimum instance count) require explicit file edits and PR review, not hidden variable overrides.
+
+### Deployment Flow
+
+For detailed job-level dependency graphs, see [CI/CD Workflows: Workflow Flows](cicd.md#workflow-flows).
+
+#### Dev-Only Mode
+
+**Pull Request:**
+- Build Docker image → Plan infrastructure (no apply)
+- Comment plan on PR
+
+**Merge to main:**
+- Build Docker image → Plan infrastructure → Apply to dev → Smoke test
+
+**Tag push:**
+- No effect on deployment in dev-only mode
+
+#### Production Mode
+
+**Pull Request:**
+- Build Docker image → Plan infrastructure (no apply)
+- Comment plan on PR
+
+**Merge to main:**
+- Build Docker image, then in parallel:
+  - Deploy to dev → Smoke
+  - Deploy to stage → Smoke
+
+**Git tag push:**
+- Verify staged image exists and stage run passed (parallel gates) → Deploy to prod (manual approval) → Smoke
+
+**Key principles:**
+- Dev deployment never waits for stage or prod
+- Stage validates every merge (continuous feedback)
+- Prod deploys only on explicit git tags (release discipline)
+- Prod promotion is gated on the tagged commit's stage run passing (see [CI/CD Workflows: Require Stage Success](cicd.md#require-stage-successyml))
+- Uniform plan → apply pattern across all environments
+
+## Image Promotion
+
+Production mode uses **image promotion** (pull from source, push to target) instead of rebuilding.
+
+### Dev → Stage
+
+**Trigger:** Merge to main
+
+**Process:**
+1. Build job pushes image to dev registry: `us-central1-docker.pkg.dev/dev-project/agent-dev/image@sha256:abc123`
+2. stage-promote job:
+   - Authenticates to dev and stage registries via WIF
+   - Pulls image from dev registry by digest
+   - Re-tags with all source tags
+   - Pushes to stage registry: `us-central1-docker.pkg.dev/stage-project/agent-stage/image@sha256:abc123`
+
+**Cross-project IAM:**
+- Stage WIF principal has `roles/artifactregistry.reader` on dev registry
+- Configured via `promotion_source_*` variables in stage bootstrap
+
+### Stage → Prod
+
+**Trigger:** Git tag push (e.g., `v1.0.0`)
+
+**Process:**
+1. resolve-digest job:
+   - Queries stage registry for image by tag: `v1.0.0`
+   - Extracts digest: `sha256:abc123`
+2. require-stage-success job (gates prod-promote):
+   - Confirms the tagged commit's merge run had `Apply Stage` and `Smoke Stage` both succeed
+   - Fails closed otherwise, halting the tag run before the `prod-apply` approval
+3. prod-promote job:
+   - Authenticates to stage and prod registries via WIF
+   - Pulls image from stage registry by digest
+   - Re-tags with all source tags
+   - Pushes to prod registry: `us-central1-docker.pkg.dev/prod-project/agent-prod/image@sha256:abc123`
+
+**Cross-project IAM:**
+- Prod WIF principal has `roles/artifactregistry.reader` on stage registry
+- Configured via `promotion_source_*` variables in prod bootstrap
+
+### Why Promote Instead of Rebuild?
+
+**Guarantees:**
+- Deploy the **exact bytes** that were tested in previous environment
+- No build-time differences (dependencies, base images, timestamps)
+- Immutable artifacts (can't accidentally rebuild with different code)
+
+**Performance:**
+- Faster than rebuild (just pull/tag/push)
+- No dependency resolution, no layer builds
+
+**Consistency:**
+- Same image digest across all environments
+- Easy to trace: "prod is running the same image validated in stage"
+
+## Runtime Configuration
+
+### Runtime vs Infrastructure Config
+
+**Runtime app config** (configurable via GitHub Environment variables):
+- `LOG_LEVEL` - Logging verbosity
+- `SERVE_WEB_INTERFACE` - Enable web UI
+- `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` - Capture LLM content in traces
+
+GitHub Environment Variables pass overrides to Terraform as `TF_VAR_*` inputs. Default values managed in Terraform.
+
+**Infrastructure config** (managed exclusively in Terraform files):
+- `SESSION_SERVICE_URI` - Session persistence URI (auto-created, `postgresql+asyncpg://` protocol via Cloud SQL)
+- `MEMORY_SERVICE_URI` - Memory persistence URI (auto-created, `agentengine://` protocol)
+- `ARTIFACT_SERVICE_URI` - GCS bucket URL (auto-created)
+- `ALLOW_ORIGINS` - CORS origins for Cloud Run
+- Terraform-managed values only (no variable overrides)
+
+**Why separate them:**
+- Runtime config changes don't require Terraform rebuilds (fast iteration)
+- Infrastructure changes require explicit code review and PR (security)
+- CORS origins not overridable by GitHub variables (prevent bypass)
+
+### Changing Runtime Config
+
+Update GitHub Environment variables (no code changes):
+
+1. Settings → Environments → {environment} → Environment variables
+2. Edit or add unset variable (e.g., `LOG_LEVEL=DEBUG` or `SERVE_WEB_INTERFACE=TRUE`)
+3. Re-run latest workflow or push new commit
+
+Changes apply on next deployment.
+
+### Changing Infrastructure Config
+
+Edit Terraform files and create PR:
+
+```bash
+git checkout -b fix/update-cors-origins
+# Edit terraform/main/main.tf (e.g., update ALLOW_ORIGINS list)
+git commit -m "fix: update CORS origins"
+git push origin fix/update-cors-origins
+gh pr create
+# Review plan in PR comment
+# Merge PR → deploys to dev (+ stage in production mode)
+```
+
+## Terraform Structure
+
+### Bootstrap Module
+
+**Purpose:** One-time CI/CD infrastructure setup (per environment)
+
+**Location:** `terraform/bootstrap/{dev,stage,prod}/`
+
+**Resources created:**
+- Workload Identity Federation (keyless GitHub Actions auth)
+- Artifact Registry (Docker image storage with cleanup policies)
+- Terraform State Bucket (remote state for main module)
+- GitHub Environments (dev/stage/prod/prod-apply in production mode)
+- GitHub Environment Variables (auto-configured per environment)
+- Tag Protection (production tag ruleset, prod bootstrap only)
+- Cross-Project IAM (Artifact Registry reader for promotion, stage/prod)
+
+**State management:** Local state (per environment)
+
+**Runs:** Manually by infrastructure owners (one-time setup)
+
+### Main Module
+
+**Purpose:** Application deployment (runs in CI/CD)
+
+**Location:** `terraform/main/`
+
+**Resources created:**
+- VPC network + subnet + Private Services Access (Cloud SQL private IP)
+- Cloud NAT router (bastion outbound connectivity)
+- IAP firewall rules (SSH + SQL proxy port to bastion)
+- Bastion host (e2-micro, COS, Auth Proxy via cloud-init, dedicated SA with `roles/iam.serviceAccountTokenCreator` on app SA for impersonation). COS cloud-init opens port 5432 via iptables (default INPUT policy is DROP), configures `--address=0.0.0.0` (accept IAP tunnel from non-loopback), and `--impersonate-service-account=<app-sa-email>` (IAM database auth as app SA).
+- Cloud Run Service (Auth Proxy sidecar + direct VPC egress)
+- Service Account (IAM identity for Cloud Run)
+- Cloud SQL instance (private IP only, session persistence via DatabaseSessionService)
+- Vertex AI Agent Engine (memory persistence)
+- GCS Bucket (artifact storage)
+
+**State management:** Remote state in GCS (bucket created by bootstrap)
+
+**Runs:** Automatically in GitHub Actions on merge/tag
+
+**Inputs:** All via `TF_VAR_*` environment variables from GitHub
+
+### Resource Naming
+
+All resources named: `${var.agent_name}-${var.environment}`
+
+**Examples:**
+- Cloud Run service: `my-agent-dev`, `my-agent-stage`, `my-agent-prod`
+- Artifact Registry: `my-agent-dev`, `my-agent-stage`, `my-agent-prod`
+- Service account: `my-agent-dev@project.iam.gserviceaccount.com`
+
+**Note:** Service account IDs truncate agent_name to 30 chars (GCP limit).
+
+---
+
+← [Back to References](README.md) | [Documentation](../README.md)
+
+
+## Rollback today (until the promotion pipeline exists)
+
+Cloud Run keeps every previous revision. To roll back immediately:
+
+```bash
+gcloud run revisions list --service sdlc-manager --region us-central1
+gcloud run services update-traffic sdlc-manager --region us-central1   --to-revisions <previous-revision>=100
+```
+
+Images are also tagged `v<version>` and by commit SHA, so redeploying a
+known-good build is `gcloud run deploy sdlc-manager --image <image>:vX.Y.Z`.
+
+## Client-Environment Deployment (Terraform / Terragrunt)
+
+Client environments are deployed declaratively — no hand-run `gcloud run deploy`.
+The Cloud Run service, its service account and IAM, session database, memory
+bank, artifact bucket, and networking are all owned by `terraform/main`,
+parameterized per environment under `terraform/envs/`.
+
+```
+terraform/
+├── bootstrap/<env>/   # one-time per project: state bucket, WIF, base APIs
+├── main/              # the full application stack (Cloud Run + dependencies)
+└── envs/
+    ├── dev/terragrunt.hcl     # auth off, scale-to-zero
+    ├── stage/terragrunt.hcl   # prod auth posture
+    └── prod/terragrunt.hcl    # auth + secrets + min-instances 1
+```
+
+**Per environment, once:** run the bootstrap stack, create the Secret Manager
+secrets (`sdlc-jwt-secret`, OAuth client secrets), then fill the `REPLACE_ME`
+values in that environment's `terragrunt.hcl` from the bootstrap outputs.
+
+**Per release:**
+
+```bash
+cd terraform/envs/prod
+terragrunt init
+terragrunt plan  -var="docker_image=<region>-docker.pkg.dev/<project>/<repo>/sdlc-manager@sha256:<digest>"
+terragrunt apply -var="docker_image=..."
+```
+
+Notes:
+- Deploy by **digest**, not tag — plans are reviewable and rollback is
+  re-applying the previous digest (also recorded in Terraform state).
+- Dashboard secrets are wired as **Secret Manager references** resolved at
+  instance start; values never enter Terraform state or the service spec, and
+  the app service account is granted accessor on exactly those secrets.
+- Ownership rule: in Terraform-managed environments the service is changed
+  ONLY through `terragrunt apply`. The CD workflow's direct `deploy-cloudrun`
+  step applies to the non-Terraform demo environment only — do not point both
+  at the same service or they will fight over the revision.
+
+### Restricted-project capability switches
+
+Each switch maps to a permission the applying identity may lack in a
+locked-down project; the module degrades cleanly instead of failing mid-apply:
+
+| Variable | Set when | Effect when disabled |
+|---|---|---|
+| `smoke_enabled = false` | `iam.serviceAccounts.setIamPolicy` denied | No CI smoke-test identity is provisioned |
+| `database_enabled = false` | `servicenetworking.services.addPeering` denied | No private Cloud SQL / bastion / NAT; sessions are in-memory |
+| `app_service_account_email = "<sa>"` | Project-IAM writes denied | Runs as the pre-provisioned account (must already hold the module's `app_iam_roles`) |
+| `ingress` / `public_access` | Org policy forbids public ingress / allUsers | Deploy behind a load balancer or IAP instead |
+
+Run Terragrunt with `TG_TF_PATH=terraform` (the module requires Terraform >= 1.14).

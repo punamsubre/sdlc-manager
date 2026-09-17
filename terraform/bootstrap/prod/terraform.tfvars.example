@@ -1,0 +1,35 @@
+#==============================================
+# REQUIRED: set to your GCP and GitHub values
+#==============================================
+
+# GCP Configuration: prod environment
+project                = "your-project-prod"  # NOTE: USE A DIFFERENT PROJECT FOR EACH ENVIRONMENT
+region                 = "us-central1"
+zone                   = "us-central1-a"
+google_cloud_location  = "global"
+agent_name             = "your-agent-name"                      # NOTE: USE THE SAME AGENT NAME ACROSS ALL ENVIRONMENTS
+terraform_state_bucket = "terraform-state-your-agent-name-prod" # NOTE: PRE-BOOTSTRAP CREATES A DIFFERENT BUCKET FOR EACH ENVIRONMENT
+
+# Cross-project Artifact Registry docker image promotion
+# - Set to null for dev bootstrap (images built in dev, no promotion)
+# - Set to dev project values for stage bootstrap (promotion dev -> stage)
+# - Set to stage values for prod bootstrap (promotion stage -> prod)
+promotion_source_project                = "your-project-stage"
+promotion_source_artifact_registry_name = "your-registry-stage"
+
+# GitHub Configuration
+repository_owner = "your-github-username-or-org"
+repository_name  = "your-agent-repository"
+
+
+# ==============================================
+# Recommended Defaults for the prod environment
+# ==============================================
+
+# OpenTelemetry Configuration
+otel_instrumentation_genai_capture_message_content = "TRUE"
+
+# Registry Cleanup Policies (prod: conservative)
+registry_cleanup_general_retention_days = 365  # Images expire after 1 year
+registry_cleanup_keep_count             = null # No KEEP policy
+registry_cleanup_pr_retention_days      = null # No PR images in prod

@@ -1,0 +1,74 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+    # v* tags intentionally do NOT trigger this workflow: it only knows
+    # how to deploy dev, and "release tag -> dev" was a footgun. The
+    # stage/prod promotion pipeline (docs/cicd.md) owns tags when built.
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SA }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ vars.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        id: build
+        run: |
+          IMAGE="${{ vars.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/${{ vars.ARTIFACT_REPO }}/sdlc-manager"
+          VERSION=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          docker buildx build \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --load \
+            --build-arg APP_VERSION="${VERSION}" \
+            --build-arg GIT_SHA="${{ github.sha }}" \
+            -t "${IMAGE}:${{ github.sha }}" \
+            -t "${IMAGE}:v${VERSION}" .
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:v${VERSION}"
+          echo "digest=$(docker inspect --format='{{index .RepoDigests 0}}' ${IMAGE}:${{ github.sha }})" >> $GITHUB_OUTPUT
+
+  deploy-dev:
+    name: Deploy to Dev
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SA }}
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: sdlc-manager-dev
+          region: ${{ vars.GCP_REGION }}
+          image: ${{ needs.build.outputs.image_digest }}

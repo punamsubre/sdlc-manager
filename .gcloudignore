@@ -1,0 +1,24 @@
+# Secrets must never be uploaded with a source deploy.
+.env
+.env.*
+!.env.example
+
+# Local environments and caches.
+.venv/
+__pycache__/
+*.pyc
+*.log
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# VCS, builds, packaging artifacts.
+.git/
+dist/
+build/
+*.egg-info/
+
+# Local tooling state.
+.vscode/
+.idea/
+node_modules/

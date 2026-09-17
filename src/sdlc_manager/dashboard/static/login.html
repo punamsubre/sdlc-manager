@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign in — SDLC Manager</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/css/dashboard.css?v=112.0">
+    <style>
+        /* Light theme for the sign-in page only — the dashboard keeps its own theme. */
+        :root {
+            --bg:            #f4f6fb;
+            --surface:       #ffffff;
+            --surface-2:     #f1f5f9;
+            --border:        rgba(15, 23, 42, 0.08);
+            --border-strong: rgba(15, 23, 42, 0.16);
+            --ink-1:         #0f172a;
+            --ink-2:         #475569;
+            --ink-3:         #64748b;
+        }
+        .panel { box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06); }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] }
+                }
+            }
+        };
+    </script>
+</head>
+<body class="bg-[var(--bg)] text-[var(--ink-1)] font-sans min-h-screen flex flex-col items-center justify-center relative overflow-hidden px-4 antialiased">
+
+    <div class="w-full max-w-md relative z-10 view-enter">
+        <!-- Logo & Header -->
+        <div class="flex flex-col items-center mb-8">
+            <div class="w-12 h-12 rounded-xl bg-[var(--accent)] flex items-center justify-center mb-4">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </div>
+            <h1 class="text-xl font-bold text-[var(--ink-1)] tracking-tight">SDLC Manager</h1>
+            <p class="text-xs text-[var(--ink-3)] mt-1 text-center">Governed Development Platform</p>
+        </div>
+
+        <!-- Card -->
+        <div class="panel p-8">
+            <h2 class="text-sm font-semibold text-[var(--ink-1)] text-center">Sign in to SDLC Manager</h2>
+            <p class="text-xs text-[var(--ink-3)] text-center mt-1 mb-6">Authenticate with your enterprise credentials.</p>
+
+            <div id="g_id_onload" data-client_id="" data-callback="handleCredentialResponse" data-auto_select="false"></div>
+            <div class="flex justify-center" id="signinButtonHost">
+                <div class="g_id_signin" data-type="standard" data-shape="rectangular" data-theme="filled_blue" data-text="signin_with" data-size="large"></div>
+            </div>
+            <p id="signinState" class="text-[11px] text-[var(--ink-3)] text-center mt-3">Loading sign-in…</p>
+
+            <div class="mt-8 pt-5 border-t border-[var(--border)] text-center hidden" id="demoModeRow">
+                <a href="/" class="inline-flex items-center gap-1.5 text-xs text-[var(--accent)] hover:underline font-medium">
+                    <span>Continue in Demo Mode</span>
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                </a>
+            </div>
+        </div>
+        
+        <p class="text-[11px] text-[var(--ink-3)] text-center mt-6">Enterprise Edition — Governed with IAM & OAuth 2.0</p>
+    </div>
+
+    <script>
+        // Fetch the sign-in configuration, inject the Google client ID, then
+        // load Google Sign-In. Without a configured client ID the button never
+        // silently fails — we say exactly what's missing.
+        fetch('/api/v1/auth/config')
+            .then(r => r.json())
+            .then(cfg => {
+                const state = document.getElementById('signinState');
+                if (!cfg.auth_enabled) {
+                    document.getElementById('demoModeRow').classList.remove('hidden');
+                }
+                if (!cfg.google_client_id) {
+                    if (state) state.innerText = cfg.auth_enabled
+                        ? 'Sign-in is not configured on this deployment (missing Google client ID). Contact your administrator.'
+                        : 'Authentication is disabled — use Demo Mode below.';
+                    return;
+                }
+                document.getElementById('g_id_onload').setAttribute('data-client_id', cfg.google_client_id);
+                const s = document.createElement('script');
+                s.src = 'https://accounts.google.com/gsi/client';
+                s.async = true;
+                s.onload = () => { if (state) state.remove(); };
+                document.head.appendChild(s);
+            })
+            .catch(() => {
+                const state = document.getElementById('signinState');
+                if (state) state.innerText = 'Could not reach the sign-in service. Refresh to try again.';
+            });
+
+        function handleCredentialResponse(response) {
+            fetch('/api/v1/auth/google', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ credential: response.credential })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    window.location.href = '/';
+                } else {
+                    alert(data.detail || 'Sign-in failed');
+                }
+            })
+            .catch(e => alert('Auth error: ' + e));
+        }
+    </script>
+</body>
+</html>
