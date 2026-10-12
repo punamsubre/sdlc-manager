@@ -1058,12 +1058,17 @@
 
                 <div class="p-3 rounded-lg bg-[var(--surface-2)] border border-[var(--border)] space-y-2">
                     <div class="flex items-center justify-between gap-2">
-                        <p class="font-semibold text-[var(--ink-1)]">One-time setup (in your repository folder):</p>
-                        <button type="button" class="text-[10.5px] font-semibold text-[var(--accent)] hover:underline shrink-0" onclick="copyHelperSetupCmd(this)">Copy</button>
+                        <p class="font-semibold text-[var(--ink-1)]">One-time setup (in your repository folder) — Windows:</p>
+                        <button type="button" class="text-[10.5px] font-semibold text-[var(--accent)] hover:underline shrink-0" onclick="copyHelperSetupCmd(this, 'helperSetupCmd')">Copy</button>
                     </div>
-                    <pre id="helperSetupCmd" class="font-mono text-[11px] bg-[var(--surface)] border border-[var(--border)] rounded-lg p-2.5 whitespace-pre-wrap break-all">powershell -c "irm https://sdlc-manager-36231825761.us-central1.run.app/setup.ps1 | iex"</pre>
+                    <pre id="helperSetupCmd" class="font-mono text-[11px] bg-[var(--surface)] border border-[var(--border)] rounded-lg p-2.5 whitespace-pre-wrap break-all"></pre>
+                    <div class="flex items-center justify-between gap-2">
+                        <p class="font-semibold text-[var(--ink-1)]">macOS / Linux:</p>
+                        <button type="button" class="text-[10.5px] font-semibold text-[var(--accent)] hover:underline shrink-0" onclick="copyHelperSetupCmd(this, 'helperSetupCmdSh')">Copy</button>
+                    </div>
+                    <pre id="helperSetupCmdSh" class="font-mono text-[11px] bg-[var(--surface)] border border-[var(--border)] rounded-lg p-2.5 whitespace-pre-wrap break-all"></pre>
                     <p class="text-[10.5px] text-[var(--ink-3)]">One command, run in your repository folder — sets everything up and prints the pairing token. Prerequisites: uv (<span class="font-mono">pip install uv</span>) and the Google Cloud CLI. Already installed? Just run <span class="font-mono">sdlc-helper</span> in your repo.</p>
-                    <p class="text-[10.5px] text-[var(--ink-3)]">The helper prints a <b>pairing token</b> — paste it below. It listens only on your own machine (127.0.0.1) and starts automatically with Windows from then on.</p>
+                    <p class="text-[10.5px] text-[var(--ink-3)]">The helper prints a <b>pairing token</b> — paste it below. It listens only on your own machine (127.0.0.1); on Windows it also starts automatically from then on.</p>
                 </div>
 
                 <div class="space-y-1">

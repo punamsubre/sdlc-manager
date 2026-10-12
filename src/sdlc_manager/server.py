@@ -64,7 +64,7 @@ async def _production_startup() -> None:
 # ADK-generated agent/session API that get_fast_api_app mounted above, which
 # carries no auth of its own — requires the dashboard session when auth is on.
 _PUBLIC_PATHS = (
-    "/", "/login", "/health", "/setup.ps1", "/static", "/api/v1/auth", "/favicon",
+    "/", "/login", "/health", "/setup.ps1", "/setup.sh", "/static", "/api/v1/auth", "/favicon",
 )
 
 # Simple in-process token buckets. Honest limitation: per-instance state, so
@@ -180,12 +180,11 @@ async def serve_login() -> FileResponse | dict[str, str]:
     return {"status": "ok", "message": "Login page"}
 
 
-@app.get("/setup.ps1", include_in_schema=False, response_model=None)
-async def serve_setup_script(request: Request):
-    """One-command developer bootstrap. Public by design: it contains no
-    secrets — the package-registry token comes from the developer's own
-    gcloud login at run time."""
-    script = STATIC_DIR / "setup.ps1"
+def _render_setup_script(request: Request, filename: str):
+    """One-command developer bootstrap, rendered per platform. Public by
+    design: the scripts contain no secrets — the package-registry token
+    comes from the developer's own gcloud login at run time."""
+    script = STATIC_DIR / filename
     if not script.is_file():
         return {"status": "error", "message": "Setup script not available."}
     # One image serves every environment: the script's self-reference URL
@@ -202,6 +201,18 @@ async def serve_setup_script(request: Request):
         os.getenv("SDLC_PYTHON_REGISTRY", ""),
     )
     return PlainTextResponse(body)
+
+
+@app.get("/setup.ps1", include_in_schema=False, response_model=None)
+async def serve_setup_script(request: Request):
+    """Windows onboarding: irm <base>/setup.ps1 | iex"""
+    return _render_setup_script(request, "setup.ps1")
+
+
+@app.get("/setup.sh", include_in_schema=False, response_model=None)
+async def serve_setup_script_sh(request: Request):
+    """macOS/Linux onboarding: curl -fsSL <base>/setup.sh | bash"""
+    return _render_setup_script(request, "setup.sh")
 
 
 @app.get("/health")

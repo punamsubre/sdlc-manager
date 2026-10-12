@@ -134,6 +134,7 @@ function openHelperModal() {
     const tokenInput = document.getElementById('helperTokenInput');
     if (urlInput) urlInput.value = helperUrl();
     if (tokenInput) tokenInput.value = helperToken();
+    renderHelperSetupCmds();
     document.getElementById('helperModal')?.classList.remove('hidden');
 }
 
@@ -141,8 +142,18 @@ function closeHelperModal() {
     document.getElementById('helperModal')?.classList.add('hidden');
 }
 
-async function copyHelperSetupCmd(btn) {
-    const cmd = document.getElementById('helperSetupCmd')?.innerText || '';
+function renderHelperSetupCmds() {
+    // The commands are derived from wherever this page was actually served -
+    // a hardcoded host would point every other deployment at the wrong one.
+    const base = window.location.origin;
+    const ps = document.getElementById('helperSetupCmd');
+    if (ps) ps.innerText = `powershell -c "irm ${base}/setup.ps1 | iex"`;
+    const sh = document.getElementById('helperSetupCmdSh');
+    if (sh) sh.innerText = `curl -fsSL ${base}/setup.sh | bash`;
+}
+
+async function copyHelperSetupCmd(btn, elementId = 'helperSetupCmd') {
+    const cmd = document.getElementById(elementId)?.innerText || '';
     if (!cmd) return;
     try {
         await navigator.clipboard.writeText(cmd);
